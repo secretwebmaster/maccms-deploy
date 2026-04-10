@@ -92,17 +92,72 @@ build_clone_url() {
   esac
 }
 
-# 1) Clone maccms repo when target does not exist
-if [ ! -d "$WWW_ROOT" ]; then
-  echo "[INFO] Cloning MacCMS to $WWW_ROOT"
-  CLONE_URL="$(build_clone_url "$GIT_REPO" "$GITHUB_KEY")"
-  git clone "$CLONE_URL" "$WWW_ROOT"
-  if [ -n "$GITHUB_KEY" ]; then
-    # Remove token from local origin URL after clone.
-    git -C "$WWW_ROOT" remote set-url origin "$GIT_REPO"
+sync_repo_to_www_root() {
+  local clone_url="$1"
+  local target_dir="$2"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  echo "[INFO] Cloning MacCMS to temp dir: $tmp_dir"
+  git clone "$clone_url" "$tmp_dir"
+
+  mkdir -p "$target_dir"
+  if command -v rsync >/dev/null 2>&1; then
+    echo "[INFO] Syncing files to $target_dir (preserve .well-known/.user.ini)"
+    rsync -a --delete \
+      --exclude ".git" \
+      --exclude ".well-known" \
+      --exclude ".user.ini" \
+      "$tmp_dir"/ "$target_dir"/
   fi
-else
-  echo "[INFO] $WWW_ROOT already exists, skip clone"
+  if ! command -v rsync >/dev/null 2>&1; then
+    echo "[WARN] rsync not found, using cp fallback (no delete sync)"
+    cp -a "$tmp_dir"/. "$target_dir"/
+    rm -rf "$target_dir/.git"
+  fi
+
+  rm -rf "$tmp_dir"
+}
+
+find_base_schema_sql() {
+  local target_dir="$1"
+  if [ -f "$target_dir/install/install.sql" ]; then
+    echo "$target_dir/install/install.sql"
+    return 0
+  fi
+  if [ -f "$target_dir/install.sql" ]; then
+    echo "$target_dir/install.sql"
+    return 0
+  fi
+  if [ -d "$target_dir/install" ]; then
+    find "$target_dir/install" -maxdepth 2 -type f -name "*.sql" | head -n 1
+    return 0
+  fi
+  return 1
+}
+
+table_exists() {
+  local table_name="$1"
+  local result
+  result="$(
+    mysql -N -s \
+      -h "$DB_HOST" \
+      -P "$DB_PORT" \
+      -u "$DB_USER" \
+      -p"$DB_PASS" \
+      -D "$DB_NAME" \
+      -e "SHOW TABLES LIKE '$table_name';" || true
+  )"
+  [ "$result" = "$table_name" ]
+}
+
+CLONE_URL="$(build_clone_url "$GIT_REPO" "$GITHUB_KEY")"
+
+# 1) Deploy code to web root even if directory already exists
+sync_repo_to_www_root "$CLONE_URL" "$WWW_ROOT"
+if [ -n "$GITHUB_KEY" ] && [ -d "$WWW_ROOT/.git" ]; then
+  # Remove token from local origin URL after clone/sync.
+  git -C "$WWW_ROOT" remote set-url origin "$GIT_REPO" || true
 fi
 
 # 2) Resolve SQL source
@@ -125,8 +180,24 @@ else
   SQL_PATH="$TMP_SQL"
 fi
 
-# 3) Import SQL
-echo "[INFO] Importing SQL into $DB_NAME ..."
+# 3) Import base schema if needed
+if ! table_exists "mac_type"; then
+  BASE_SQL_PATH="$(find_base_schema_sql "$WWW_ROOT" || true)"
+  if [ -n "${BASE_SQL_PATH:-}" ] && [ -f "$BASE_SQL_PATH" ]; then
+    echo "[INFO] Table mac_type not found, importing base schema: $BASE_SQL_PATH"
+    mysql \
+      -h "$DB_HOST" \
+      -P "$DB_PORT" \
+      -u "$DB_USER" \
+      -p"$DB_PASS" \
+      "$DB_NAME" < "$BASE_SQL_PATH"
+  else
+    echo "[WARN] Table mac_type not found and base schema SQL not found in $WWW_ROOT"
+  fi
+fi
+
+# 4) Import site SQL
+echo "[INFO] Importing site SQL into $DB_NAME ..."
 mysql \
   -h "$DB_HOST" \
   -P "$DB_PORT" \
@@ -134,7 +205,7 @@ mysql \
   -p"$DB_PASS" \
   "$DB_NAME" < "$SQL_PATH"
 
-echo "[OK] MacCMS clone + database SQL import completed."
+echo "[OK] MacCMS code sync + database SQL import completed."
 
 if [ -n "$TMP_SQL" ] && [ -f "$TMP_SQL" ]; then
   rm -f "$TMP_SQL"
