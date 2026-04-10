@@ -19,7 +19,7 @@ INSTALL_DIR="/"
 APP_LANG="zh-cn"
 DEPLOY_REV="unknown"
 
-echo "[INFO] install.sh version: ${SCRIPT_VERSION}"
+echo "[INFO] install.sh 版本：${SCRIPT_VERSION}"
 
 usage() {
   cat <<'EOF'
@@ -66,7 +66,7 @@ while [ $# -gt 0 ]; do
     --git_repo=*) GIT_REPO="${1#*=}" ; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
-      echo "[ERR] Unknown argument: $1"
+      echo "[ERR] 未知參數：$1"
       usage
       exit 1
       ;;
@@ -75,30 +75,30 @@ done
 
 # Validate required args
 if [ -z "${DOMAIN:-}" ] || [ -z "${DB_NAME:-}" ] || [ -z "${DB_USER:-}" ] || [ -z "${DB_PASS:-}" ]; then
-  echo "[ERR] Missing required arguments."
+  echo "[ERR] 缺少必要參數。"
   usage
   exit 1
 fi
 
 if ! echo "$DB_PREFIX" | grep -Eq '^[a-z0-9]{1,20}_$'; then
-  echo "[ERR] --db_prefix must match ^[a-z0-9]{1,20}_$"
+  echo "[ERR] --db_prefix 格式必須符合 ^[a-z0-9]{1,20}_$"
   exit 1
 fi
 
 if [ "$INITDATA" != "0" ] && [ "$INITDATA" != "1" ]; then
-  echo "[ERR] --initdata must be 0 or 1"
+  echo "[ERR] --initdata 只能是 0 或 1"
   exit 1
 fi
 
 if { [ -n "$ADMIN_USER" ] && [ -z "$ADMIN_PASS" ]; } || { [ -z "$ADMIN_USER" ] && [ -n "$ADMIN_PASS" ]; }; then
-  echo "[ERR] --admin_user and --admin_pass must be provided together"
+  echo "[ERR] --admin_user 與 --admin_pass 必須同時提供"
   exit 1
 fi
 
 if [ -n "$ADMIN_PASS" ]; then
   pass_len="${#ADMIN_PASS}"
   if [ "$pass_len" -lt 6 ] || [ "$pass_len" -gt 20 ]; then
-    echo "[ERR] --admin_pass length must be 6-20"
+    echo "[ERR] --admin_pass 長度必須為 6-20"
     exit 1
   fi
 fi
@@ -117,7 +117,7 @@ resolve_default_sql_ref() {
     movie) echo "sql/movie_2026.sql" ;;
     adult) echo "sql/adult_2026.sql" ;;
     *)
-      echo "[ERR] Unsupported --site_type: $SITE_TYPE (allowed: movie, adult)" >&2
+      echo "[ERR] 不支援的 --site_type：$SITE_TYPE（允許：movie, adult）" >&2
       exit 1
       ;;
   esac
@@ -149,21 +149,21 @@ sync_repo_to_www_root() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
 
-  echo "[INFO] Cloning MacCMS to temp dir: $tmp_dir"
+  echo "[INFO] 正在 clone MacCMS 至暫存目錄：$tmp_dir"
   git clone "$clone_url" "$tmp_dir"
   DEPLOY_REV="$(git -C "$tmp_dir" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  echo "[INFO] Source revision: $DEPLOY_REV"
+  echo "[INFO] 來源版本：$DEPLOY_REV"
 
   mkdir -p "$target_dir"
   if command -v rsync >/dev/null 2>&1; then
-    echo "[INFO] Syncing files to $target_dir (preserve .well-known/.user.ini)"
+    echo "[INFO] 正在同步檔案到 $target_dir（保留 .well-known/.user.ini）"
     rsync -a --delete \
       --exclude ".git" \
       --exclude ".well-known" \
       --exclude ".user.ini" \
       "$tmp_dir"/ "$target_dir"/
   else
-    echo "[WARN] rsync not found, using cp fallback (no delete sync)"
+    echo "[WARN] 找不到 rsync，改用 cp 備援（不會刪除多餘檔案）"
     cp -a "$tmp_dir"/. "$target_dir"/
     rm -rf "$target_dir/.git"
   fi
@@ -175,12 +175,21 @@ ensure_webroot_owner() {
   local target_dir="$1"
   local owner_now=""
   if id -u www >/dev/null 2>&1 && getent group www >/dev/null 2>&1; then
-    echo "[INFO] Setting owner to www:www for $target_dir"
-    chown -R www:www "$target_dir"
+    echo "[INFO] 正在將 $target_dir 擁有者設為 www:www"
+    if ! chown -R www:www "$target_dir" 2>/dev/null; then
+      echo "[WARN] 遞迴 chown 發生權限錯誤；將排除 .user.ini 後重試"
+      if command -v find >/dev/null 2>&1; then
+        find "$target_dir" \
+          -path "$target_dir/.user.ini" -prune -o \
+          -exec chown www:www {} + 2>/dev/null || true
+      else
+        echo "[WARN] 找不到 find 指令，略過備援 chown"
+      fi
+    fi
     owner_now="$(stat -c '%U:%G' "$target_dir" 2>/dev/null || echo unknown)"
-    echo "[INFO] Current owner for $target_dir: $owner_now"
+    echo "[INFO] $target_dir 目前擁有者：$owner_now"
   else
-    echo "[WARN] User/group www:www not found, skip chown"
+    echo "[WARN] 找不到 www:www 使用者/群組，略過 chown"
   fi
 }
 
@@ -200,7 +209,7 @@ table_exists() {
 }
 
 ensure_database_exists() {
-  echo "[INFO] Ensuring database exists: $DB_NAME"
+  echo "[INFO] 確認資料庫存在：$DB_NAME"
   mysql \
     -h "$DB_HOST" \
     -P "$DB_PORT" \
@@ -240,7 +249,7 @@ return [
     'query'           => '\\think\\db\\Query',
 ];
 EOF
-  echo "[INFO] Wrote DB config: $db_file"
+  echo "[INFO] 已寫入資料庫設定檔：$db_file"
 }
 
 import_sql_with_prefix() {
@@ -250,7 +259,7 @@ import_sql_with_prefix() {
   local tmp_sql=""
 
   if [ ! -f "$sql_file" ]; then
-    echo "[ERR] SQL file not found: $sql_file"
+    echo "[ERR] 找不到 SQL 檔案：$sql_file"
     exit 1
   fi
 
@@ -260,7 +269,7 @@ import_sql_with_prefix() {
     sql_to_import="$tmp_sql"
   fi
 
-  echo "[INFO] Importing $label SQL into $DB_NAME ..."
+  echo "[INFO] 正在匯入 $label SQL 到 $DB_NAME ..."
   mysql \
     -h "$DB_HOST" \
     -P "$DB_PORT" \
@@ -296,15 +305,15 @@ import_base_schema_if_needed() {
   fi
 
   if [ -z "$base_install_sql" ]; then
-    echo "[WARN] Table ${DB_PREFIX}type not found and base schema SQL not found in $target_dir"
+    echo "[WARN] 找不到資料表 ${DB_PREFIX}type，且在 $target_dir 找不到基礎 schema SQL"
     return 0
   fi
 
-  echo "[INFO] Table ${DB_PREFIX}type not found, importing base schema: $base_install_sql"
+  echo "[INFO] 找不到資料表 ${DB_PREFIX}type，正在匯入基礎 schema：$base_install_sql"
   import_sql_with_prefix "$base_install_sql" "base-schema"
 
   if [ "$INITDATA" = "1" ] && [ -n "$base_init_sql" ]; then
-    echo "[INFO] Importing base init data: $base_init_sql"
+    echo "[INFO] 正在匯入基礎初始化資料：$base_init_sql"
     import_sql_with_prefix "$base_init_sql" "base-initdata"
   fi
 }
@@ -315,12 +324,12 @@ update_maccms_config() {
 
   mkdir -p "$(dirname "$conf_file")"
   if [ ! -f "$conf_file" ]; then
-    echo "[WARN] Config file not found, skip maccms config update: $conf_file"
+    echo "[WARN] 找不到設定檔，略過 maccms 設定更新：$conf_file"
     return 0
   fi
 
   if ! command -v php >/dev/null 2>&1; then
-    echo "[WARN] php command not found, skip maccms config update"
+    echo "[WARN] 找不到 php 指令，略過 maccms 設定更新"
     return 0
   fi
 
@@ -347,7 +356,7 @@ update_maccms_config() {
     file_put_contents($file, $body);
   ' "$conf_file" "$INSTALL_DIR" "$APP_LANG"
 
-  echo "[INFO] Updated app config: $conf_file"
+  echo "[INFO] 已更新程式設定檔：$conf_file"
 }
 
 create_install_lock() {
@@ -355,7 +364,7 @@ create_install_lock() {
   local lock_file="$target_dir/application/data/install/install.lock"
   mkdir -p "$(dirname "$lock_file")"
   date '+%Y-%m-%d %H:%M:%S' > "$lock_file"
-  echo "[INFO] Wrote install lock: $lock_file"
+  echo "[INFO] 已建立安裝鎖檔：$lock_file"
 }
 
 ensure_admin_account() {
@@ -366,7 +375,7 @@ ensure_admin_account() {
   local esc_user
 
   if ! table_exists "$table_name"; then
-    echo "[WARN] Admin table not found: $table_name"
+    echo "[WARN] 找不到管理員資料表：$table_name"
     return 0
   fi
 
@@ -381,12 +390,12 @@ ensure_admin_account() {
   )"
 
   if [ "$admin_count" != "0" ]; then
-    echo "[INFO] Admin account already exists, skip bootstrap"
+    echo "[INFO] 管理員帳號已存在，略過初始化"
     return 0
   fi
 
   if [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_PASS" ]; then
-    echo "[WARN] No admin found in DB. Provide --admin_user and --admin_pass to bootstrap one."
+    echo "[WARN] 資料庫中無管理員帳號。可傳入 --admin_user 與 --admin_pass 進行初始化。"
     return 0
   fi
 
@@ -402,7 +411,7 @@ ensure_admin_account() {
     -D "$DB_NAME" \
     -e "INSERT INTO \`$table_name\` (\`admin_name\`,\`admin_pwd\`,\`admin_random\`,\`admin_status\`,\`admin_auth\`) VALUES ('$esc_user','$admin_pwd_md5','$admin_random',1,'');"
 
-  echo "[INFO] Bootstrapped admin account: $ADMIN_USER"
+  echo "[INFO] 已初始化管理員帳號：$ADMIN_USER"
 }
 
 CLONE_URL="$(build_clone_url "$GIT_REPO" "$GITHUB_KEY")"
@@ -419,7 +428,7 @@ fi
 TMP_SQL=""
 if [ -n "$SQL_PATH" ]; then
   if [ ! -f "$SQL_PATH" ]; then
-    echo "[ERR] --sql_path file not found: $SQL_PATH"
+    echo "[ERR] --sql_path 指定檔案不存在：$SQL_PATH"
     exit 1
   fi
 elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$(resolve_default_sql_ref)" ]; then
@@ -430,7 +439,7 @@ else
     SQL_URL="$DEPLOY_RAW_BASE/$SQL_REF"
   fi
   TMP_SQL="$(mktemp)"
-  echo "[INFO] Downloading SQL from: $SQL_URL"
+  echo "[INFO] 正在下載 SQL：$SQL_URL"
   curl -fsSL "$SQL_URL" -o "$TMP_SQL"
   SQL_PATH="$TMP_SQL"
 fi
@@ -452,7 +461,7 @@ create_install_lock "$WWW_ROOT"
 # 7) Optional admin bootstrap
 ensure_admin_account
 
-echo "[OK] MacCMS auto deploy steps completed. source_rev=$DEPLOY_REV"
+echo "[OK] MacCMS 自動部署流程完成。source_rev=$DEPLOY_REV"
 
 if [ -n "$TMP_SQL" ] && [ -f "$TMP_SQL" ]; then
   rm -f "$TMP_SQL"
