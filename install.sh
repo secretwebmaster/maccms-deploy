@@ -99,6 +99,12 @@ if [ -n "$ADMIN_PASS" ]; then
   fi
 fi
 
+# Default admin bootstrap credentials when not provided.
+if [ -z "$ADMIN_USER" ] && [ -z "$ADMIN_PASS" ]; then
+  ADMIN_USER="demoadmin"
+  ADMIN_PASS="p123456789"
+fi
+
 WWW_ROOT="/www/wwwroot/$DOMAIN"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 
@@ -157,6 +163,16 @@ sync_repo_to_www_root() {
   fi
 
   rm -rf "$tmp_dir"
+}
+
+ensure_webroot_owner() {
+  local target_dir="$1"
+  if id -u www >/dev/null 2>&1 && getent group www >/dev/null 2>&1; then
+    echo "[INFO] Setting owner to www:www for $target_dir"
+    chown -R www:www "$target_dir"
+  else
+    echo "[WARN] User/group www:www not found, skip chown"
+  fi
 }
 
 table_exists() {
@@ -384,6 +400,7 @@ CLONE_URL="$(build_clone_url "$GIT_REPO" "$GITHUB_KEY")"
 
 # 1) Deploy code to web root even if directory already exists
 sync_repo_to_www_root "$CLONE_URL" "$WWW_ROOT"
+ensure_webroot_owner "$WWW_ROOT"
 if [ -n "$GITHUB_KEY" ] && [ -d "$WWW_ROOT/.git" ]; then
   # Remove token from local origin URL after clone/sync.
   git -C "$WWW_ROOT" remote set-url origin "$GIT_REPO" || true
