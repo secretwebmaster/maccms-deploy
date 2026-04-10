@@ -119,21 +119,50 @@ sync_repo_to_www_root() {
   rm -rf "$tmp_dir"
 }
 
-find_base_schema_sql() {
+import_base_schema_if_needed() {
   local target_dir="$1"
-  if [ -f "$target_dir/install/install.sql" ]; then
-    echo "$target_dir/install/install.sql"
+  local base_install_sql=""
+  local base_init_sql=""
+
+  if table_exists "mac_type"; then
     return 0
   fi
-  if [ -f "$target_dir/install.sql" ]; then
-    echo "$target_dir/install.sql"
+
+  # MacCMS v10 default installer SQL location.
+  if [ -f "$target_dir/application/install/sql/install.sql" ]; then
+    base_install_sql="$target_dir/application/install/sql/install.sql"
+  elif [ -f "$target_dir/install/install.sql" ]; then
+    base_install_sql="$target_dir/install/install.sql"
+  elif [ -f "$target_dir/install.sql" ]; then
+    base_install_sql="$target_dir/install.sql"
+  fi
+
+  if [ -f "$target_dir/application/install/sql/initdata.sql" ]; then
+    base_init_sql="$target_dir/application/install/sql/initdata.sql"
+  fi
+
+  if [ -z "$base_install_sql" ]; then
+    echo "[WARN] Table mac_type not found and base schema SQL not found in $target_dir"
     return 0
   fi
-  if [ -d "$target_dir/install" ]; then
-    find "$target_dir/install" -maxdepth 2 -type f -name "*.sql" | head -n 1
-    return 0
+
+  echo "[INFO] Table mac_type not found, importing base schema: $base_install_sql"
+  mysql \
+    -h "$DB_HOST" \
+    -P "$DB_PORT" \
+    -u "$DB_USER" \
+    -p"$DB_PASS" \
+    "$DB_NAME" < "$base_install_sql"
+
+  if [ -n "$base_init_sql" ]; then
+    echo "[INFO] Importing base init data: $base_init_sql"
+    mysql \
+      -h "$DB_HOST" \
+      -P "$DB_PORT" \
+      -u "$DB_USER" \
+      -p"$DB_PASS" \
+      "$DB_NAME" < "$base_init_sql"
   fi
-  return 1
 }
 
 table_exists() {
@@ -181,20 +210,7 @@ else
 fi
 
 # 3) Import base schema if needed
-if ! table_exists "mac_type"; then
-  BASE_SQL_PATH="$(find_base_schema_sql "$WWW_ROOT" || true)"
-  if [ -n "${BASE_SQL_PATH:-}" ] && [ -f "$BASE_SQL_PATH" ]; then
-    echo "[INFO] Table mac_type not found, importing base schema: $BASE_SQL_PATH"
-    mysql \
-      -h "$DB_HOST" \
-      -P "$DB_PORT" \
-      -u "$DB_USER" \
-      -p"$DB_PASS" \
-      "$DB_NAME" < "$BASE_SQL_PATH"
-  else
-    echo "[WARN] Table mac_type not found and base schema SQL not found in $WWW_ROOT"
-  fi
-fi
+import_base_schema_if_needed "$WWW_ROOT"
 
 # 4) Import site SQL
 echo "[INFO] Importing site SQL into $DB_NAME ..."
