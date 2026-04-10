@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Defaults
-SCRIPT_VERSION="2026.04.11-1"
+SCRIPT_VERSION="1.0.1"
 GIT_REPO="https://github.com/secretwebmaster/maccms.git"
 DEPLOY_RAW_BASE="https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main"
 SITE_TYPE="movie"
