@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Defaults
+SCRIPT_VERSION="2026.04.11-1"
 GIT_REPO="https://github.com/secretwebmaster/maccms.git"
 DEPLOY_RAW_BASE="https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main"
 SITE_TYPE="movie"
@@ -16,6 +17,9 @@ ADMIN_USER=""
 ADMIN_PASS=""
 INSTALL_DIR="/"
 APP_LANG="zh-cn"
+DEPLOY_REV="unknown"
+
+echo "[INFO] install.sh version: ${SCRIPT_VERSION}"
 
 usage() {
   cat <<'EOF'
@@ -147,6 +151,8 @@ sync_repo_to_www_root() {
 
   echo "[INFO] Cloning MacCMS to temp dir: $tmp_dir"
   git clone "$clone_url" "$tmp_dir"
+  DEPLOY_REV="$(git -C "$tmp_dir" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  echo "[INFO] Source revision: $DEPLOY_REV"
 
   mkdir -p "$target_dir"
   if command -v rsync >/dev/null 2>&1; then
@@ -167,9 +173,12 @@ sync_repo_to_www_root() {
 
 ensure_webroot_owner() {
   local target_dir="$1"
+  local owner_now=""
   if id -u www >/dev/null 2>&1 && getent group www >/dev/null 2>&1; then
     echo "[INFO] Setting owner to www:www for $target_dir"
     chown -R www:www "$target_dir"
+    owner_now="$(stat -c '%U:%G' "$target_dir" 2>/dev/null || echo unknown)"
+    echo "[INFO] Current owner for $target_dir: $owner_now"
   else
     echo "[WARN] User/group www:www not found, skip chown"
   fi
@@ -443,7 +452,7 @@ create_install_lock "$WWW_ROOT"
 # 7) Optional admin bootstrap
 ensure_admin_account
 
-echo "[OK] MacCMS auto deploy steps completed."
+echo "[OK] MacCMS auto deploy steps completed. source_rev=$DEPLOY_REV"
 
 if [ -n "$TMP_SQL" ] && [ -f "$TMP_SQL" ]; then
   rm -f "$TMP_SQL"
