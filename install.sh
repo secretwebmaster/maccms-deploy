@@ -157,7 +157,8 @@ sync_repo_to_www_root() {
   local tmp_dir
 
   tmp_dir="$(mktemp -d)"
-  git clone "$clone_url" "$tmp_dir"
+  echo "[INFO] 正在下載 Maccms"
+  git clone --quiet "$clone_url" "$tmp_dir" >/dev/null 2>&1
   DEPLOY_REV="$(git -C "$tmp_dir" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
   mkdir -p "$target_dir"
@@ -332,7 +333,7 @@ import_sql_with_prefix() {
     sql_to_import="$tmp_sql"
   fi
 
-  echo "[INFO]  正在匯入 $label 到 $DB_NAME ..."
+  echo "[INFO] 正在匯入 $label 到 $DB_NAME ..."
   mysql_import "$DB_NAME" "$sql_to_import"
 
   if [ -n "$tmp_sql" ] && [ -f "$tmp_sql" ]; then
@@ -366,7 +367,6 @@ import_base_schema_if_needed() {
     return 0
   fi
 
-  echo "[INFO] 找不到既有 MacCMS schema，正在匯入基礎 schema: $base_install_sql"
   import_sql_with_prefix "$base_install_sql" "$(basename "$base_install_sql")"
 
   if [ "$INITDATA" = "1" ] && [ -n "$base_init_sql" ]; then
@@ -506,25 +506,32 @@ if [ -n "$GITHUB_KEY" ] && [ -d "$WWW_ROOT/.git" ]; then
 fi
 
 TMP_SQL=""
+SQL_LABEL=""
 if [ -n "$SQL_PATH" ]; then
   if [ ! -f "$SQL_PATH" ]; then
     echo "[ERR] --sql_path file not found: $SQL_PATH"
     exit 1
   fi
+  SQL_LABEL="$(basename "$SQL_PATH")"
 elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$(resolve_default_sql_ref)" ]; then
   SQL_PATH="$SCRIPT_DIR/$(resolve_default_sql_ref)"
+  SQL_LABEL="$(basename "$SQL_PATH")"
 else
   SQL_REF="$(resolve_default_sql_ref)"
   SQL_URL="${SQL_URL:-$DEPLOY_RAW_BASE/$SQL_REF}"
   TMP_SQL="$(mktemp)"
   curl -fsSL "$SQL_URL" -o "$TMP_SQL"
   SQL_PATH="$TMP_SQL"
+  SQL_LABEL="$(basename "${SQL_URL%%\?*}")"
+  if [ -z "$SQL_LABEL" ]; then
+    SQL_LABEL="site.sql"
+  fi
 fi
 
 ensure_database_exists
 write_database_php_config "$WWW_ROOT"
 import_base_schema_if_needed "$WWW_ROOT"
-import_sql_with_prefix "$SQL_PATH" "install.sql"
+import_sql_with_prefix "$SQL_PATH" "$SQL_LABEL"
 update_maccms_config "$WWW_ROOT" "$THEME"
 create_install_lock "$WWW_ROOT"
 ensure_admin_account
