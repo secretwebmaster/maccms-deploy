@@ -7,11 +7,13 @@
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main/install.sh?ts=$(date +%s)" -o /tmp/install.sh
 bash /tmp/install.sh \
-  --domain=s1699.com \
-  --db_name=s1699_com \
-  --db_user=s1699_com \
-  --db_pass='M7GEj7zZbPJpHEN2' \
-  --site_type=movie
+  --domain=example.com \
+  --db_name=example_com \
+  --db_user=example_com \
+  --db_pass='123456789' \
+  --site_type=adult \
+  --route=1 \
+  --theme=wntheme26
 ```
 
 ## 2. 最小必要參數

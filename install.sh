@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.0.13"
+SCRIPT_VERSION="1.0.14"
 
 GIT_REPO="https://github.com/secretwebmaster/maccms.git"
 DEPLOY_RAW_BASE="https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main"
@@ -20,6 +20,7 @@ APP_LANG="zh-cn"
 DEPLOY_REV="unknown"
 THEME=""
 SITE_NAME=""
+ROUTE="0"
 
 usage() {
   cat <<'EOF'
@@ -36,6 +37,7 @@ Usage:
     [--initdata=0|1] \
     [--theme=wntheme26] \
     [--site-name=MySite] \
+    [--route=0|1] \
     [--admin_user=demoadmin --admin_pass=p123456789] \
     [--install_dir=/] \
     [--lang=zh-cn] \
@@ -59,6 +61,7 @@ while [ $# -gt 0 ]; do
     --initdata=*) INITDATA="${1#*=}" ; shift ;;
     --theme=*) THEME="${1#*=}" ; shift ;;
     --site-name=*) SITE_NAME="${1#*=}" ; shift ;;
+    --route=*) ROUTE="${1#*=}" ; shift ;;
     --admin_user=*) ADMIN_USER="${1#*=}" ; shift ;;
     --admin_pass=*) ADMIN_PASS="${1#*=}" ; shift ;;
     --install_dir=*) INSTALL_DIR="${1#*=}" ; shift ;;
@@ -85,6 +88,11 @@ fi
 
 if [ "$INITDATA" != "0" ] && [ "$INITDATA" != "1" ]; then
   echo "[ERR] --initdata must be 0 or 1"
+  exit 1
+fi
+
+if [ "$ROUTE" != "0" ] && [ "$ROUTE" != "1" ]; then
+  echo "[ERR] --route must be 0 or 1"
   exit 1
 fi
 
@@ -395,11 +403,13 @@ update_maccms_config() {
     $domain = $argv[5];
     $cacheFlag = $argv[6];
     $siteName = $argv[7];
+    $routeFlag = $argv[8];
     $cfg = include $file;
     if (!is_array($cfg)) { $cfg = []; }
     if (!isset($cfg["app"]) || !is_array($cfg["app"])) { $cfg["app"] = []; }
     if (!isset($cfg["site"]) || !is_array($cfg["site"])) { $cfg["site"] = []; }
     if (!isset($cfg["interface"]) || !is_array($cfg["interface"])) { $cfg["interface"] = []; }
+    if (!isset($cfg["rewrite"]) || !is_array($cfg["rewrite"])) { $cfg["rewrite"] = []; }
     if (!isset($cfg["api"]) || !is_array($cfg["api"])) { $cfg["api"] = []; }
     if (!isset($cfg["api"]["vod"]) || !is_array($cfg["api"]["vod"])) { $cfg["api"]["vod"] = []; }
     if (!isset($cfg["api"]["art"]) || !is_array($cfg["api"]["art"])) { $cfg["api"]["art"] = []; }
@@ -417,9 +427,14 @@ update_maccms_config() {
     $cfg["interface"]["pass"] = strtoupper(substr(md5(uniqid("", true)), 0, 16));
     $cfg["api"]["vod"]["status"] = 0;
     $cfg["api"]["art"]["status"] = 0;
+    if ($routeFlag === "1") {
+      $cfg["rewrite"]["suffix_hide"] = 1;
+      $cfg["rewrite"]["route_status"] = 1;
+      $cfg["rewrite"]["status"] = 1;
+    }
     $body = "<?php\nreturn " . var_export($cfg, true) . ";\n";
     file_put_contents($file, $body);
-  ' "$conf_file" "$INSTALL_DIR" "$APP_LANG" "$theme_name" "$DOMAIN" "$CACHE_FLAG" "$SITE_NAME"
+  ' "$conf_file" "$INSTALL_DIR" "$APP_LANG" "$theme_name" "$DOMAIN" "$CACHE_FLAG" "$SITE_NAME" "$ROUTE"
 }
 
 create_install_lock() {
