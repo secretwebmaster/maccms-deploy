@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.0.11"
+SCRIPT_VERSION="1.0.12"
 
 GIT_REPO="https://github.com/secretwebmaster/maccms.git"
 DEPLOY_RAW_BASE="https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main"
@@ -181,11 +181,17 @@ deploy_overlay_dir_if_needed() {
   overlay_ref="$(resolve_default_overlay_dir_ref)"
   overlay_local_dir="$SCRIPT_DIR/$overlay_ref"
 
+  if [ "$SITE_TYPE" = "movie" ]; then
+    echo "[INFO] 正在覆蓋 movie 核心檔案"
+  elif [ "$SITE_TYPE" = "adult" ]; then
+    echo "[INFO] 正在覆蓋 adult 核心檔案"
+  fi
+
   if [ -d "$overlay_local_dir" ]; then
     overlay_source_dir="$overlay_local_dir"
   else
     tmp_deploy_repo="$(mktemp -d)"
-    git clone --depth 1 "https://github.com/secretwebmaster/maccms-deploy.git" "$tmp_deploy_repo"
+    git clone --depth 1 --quiet "https://github.com/secretwebmaster/maccms-deploy.git" "$tmp_deploy_repo" >/dev/null 2>&1
     overlay_source_dir="$tmp_deploy_repo/$overlay_ref"
   fi
 
@@ -222,7 +228,7 @@ deploy_theme_if_needed() {
   theme_dir="$target_dir/template/$theme_name"
   tmp_theme_dir="$(mktemp -d)"
 
-  echo "正在下載主題: $theme_name"
+  echo "[INFO] 正在下載主題: $theme_name"
   if ! git clone --quiet "$theme_clone_url" "$tmp_theme_dir" >/dev/null 2>&1; then
     echo "[ERR] 主題下載失敗: $theme_name"
     rm -rf "$tmp_theme_dir"
@@ -238,7 +244,7 @@ deploy_theme_if_needed() {
   fi
 
   rm -rf "$tmp_theme_dir"
-  echo "成功下載主題: $theme_name"
+  echo "[INFO] 成功下載主題: $theme_name"
 }
 
 ensure_webroot_owner() {
@@ -361,7 +367,7 @@ import_base_schema_if_needed() {
   fi
 
   echo "[INFO] 找不到既有 MacCMS schema，正在匯入基礎 schema: $base_install_sql"
-  import_sql_with_prefix "$base_install_sql" "base-schema.sql"
+  import_sql_with_prefix "$base_install_sql" "$(basename "$base_install_sql")"
 
   if [ "$INITDATA" = "1" ] && [ -n "$base_init_sql" ]; then
     import_sql_with_prefix "$base_init_sql" "initdata.sql"
