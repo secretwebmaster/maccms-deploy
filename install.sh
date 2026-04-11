@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Defaults
-SCRIPT_VERSION="1.0.7"
+SCRIPT_VERSION="1.0.9"
 GIT_REPO="https://github.com/secretwebmaster/maccms.git"
 DEPLOY_RAW_BASE="https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main"
 SITE_TYPE="movie"
@@ -126,6 +126,17 @@ resolve_default_sql_ref() {
   esac
 }
 
+resolve_default_overlay_dir_ref() {
+  case "$SITE_TYPE" in
+    movie) echo "overlay/movie" ;;
+    adult) echo "overlay/adult" ;;
+    *)
+      echo "[ERR] 不支援的 --site_type: $SITE_TYPE (允許: movie, adult)" >&2
+      exit 1
+      ;;
+  esac
+}
+
 build_clone_url() {
   local repo_url="$1"
   local key="$2"
@@ -171,6 +182,43 @@ sync_repo_to_www_root() {
   fi
 
   rm -rf "$tmp_dir"
+}
+
+deploy_overlay_dir_if_needed() {
+  local target_dir="$1"
+  local overlay_ref
+  local overlay_local_dir
+  local overlay_source_dir=""
+  local tmp_deploy_repo=""
+
+  overlay_ref="$(resolve_default_overlay_dir_ref)"
+  overlay_local_dir="$SCRIPT_DIR/$overlay_ref"
+
+  if [ -d "$overlay_local_dir" ]; then
+    overlay_source_dir="$overlay_local_dir"
+    echo "[INFO] 使用本地 overlay 目錄: $overlay_source_dir"
+  else
+    tmp_deploy_repo="$(mktemp -d)"
+    echo "[INFO] 正在下載部署倉庫以取得 overlay 目錄"
+    git clone --depth 1 "https://github.com/secretwebmaster/maccms-deploy.git" "$tmp_deploy_repo"
+    overlay_source_dir="$tmp_deploy_repo/$overlay_ref"
+  fi
+
+  if [ ! -d "$overlay_source_dir" ]; then
+    echo "[ERR] 找不到 overlay 目錄: $overlay_source_dir"
+    exit 1
+  fi
+
+  echo "[INFO] 正在覆蓋 overlay 檔案到站點根目錄: $target_dir"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "$overlay_source_dir"/ "$target_dir"/
+  else
+    cp -a "$overlay_source_dir"/. "$target_dir"/
+  fi
+
+  if [ -n "$tmp_deploy_repo" ] && [ -d "$tmp_deploy_repo" ]; then
+    rm -rf "$tmp_deploy_repo"
+  fi
 }
 
 deploy_theme_if_needed() {
@@ -510,6 +558,7 @@ CLONE_URL="$(build_clone_url "$GIT_REPO" "$GITHUB_KEY")"
 # 1) Deploy code to web root even if directory already exists
 sync_repo_to_www_root "$CLONE_URL" "$WWW_ROOT"
 deploy_theme_if_needed "$WWW_ROOT" "$THEME"
+deploy_overlay_dir_if_needed "$WWW_ROOT"
 ensure_webroot_owner "$WWW_ROOT"
 if [ -n "$GITHUB_KEY" ] && [ -d "$WWW_ROOT/.git" ]; then
   git -C "$WWW_ROOT" remote set-url origin "$GIT_REPO" || true
