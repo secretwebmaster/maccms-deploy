@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Defaults
-SCRIPT_VERSION="1.0.9"
+SCRIPT_VERSION="1.0.10"
 GIT_REPO="https://github.com/secretwebmaster/maccms.git"
 DEPLOY_RAW_BASE="https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main"
 SITE_TYPE="movie"
@@ -19,6 +19,7 @@ INSTALL_DIR="/"
 APP_LANG="zh-cn"
 DEPLOY_REV="unknown"
 THEME=""
+SITE_NAME=""
 
 echo "[INFO] install.sh 版本: ${SCRIPT_VERSION}"
 
@@ -36,6 +37,7 @@ Usage:
     [--site_type=movie|adult] \
     [--initdata=0|1] \
     [--theme=wntheme26] \
+    [--site-name=MySite] \
     [--admin_user=demoadmin --admin_pass=p123456789] \
     [--install_dir=/] \
     [--lang=zh-cn] \
@@ -59,6 +61,7 @@ while [ $# -gt 0 ]; do
     --site_type=*) SITE_TYPE="${1#*=}" ; shift ;;
     --initdata=*) INITDATA="${1#*=}" ; shift ;;
     --theme=*) THEME="${1#*=}" ; shift ;;
+    --site-name=*) SITE_NAME="${1#*=}" ; shift ;;
     --admin_user=*) ADMIN_USER="${1#*=}" ; shift ;;
     --admin_pass=*) ADMIN_PASS="${1#*=}" ; shift ;;
     --install_dir=*) INSTALL_DIR="${1#*=}" ; shift ;;
@@ -114,6 +117,10 @@ fi
 
 WWW_ROOT="/www/wwwroot/$DOMAIN"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+CACHE_FLAG="$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//')"
+if [ -z "$CACHE_FLAG" ]; then
+  CACHE_FLAG="maccms"
+fi
 
 resolve_default_sql_ref() {
   case "$SITE_TYPE" in
@@ -426,6 +433,9 @@ update_maccms_config() {
     $installDir = $argv[2];
     $lang = $argv[3];
     $theme = $argv[4];
+    $domain = $argv[5];
+    $cacheFlag = $argv[6];
+    $siteName = $argv[7];
     $cfg = include $file;
     if (!is_array($cfg)) { $cfg = []; }
     if (!isset($cfg["app"]) || !is_array($cfg["app"])) { $cfg["app"] = []; }
@@ -434,9 +444,14 @@ update_maccms_config() {
     if (!isset($cfg["api"]) || !is_array($cfg["api"])) { $cfg["api"] = []; }
     if (!isset($cfg["api"]["vod"]) || !is_array($cfg["api"]["vod"])) { $cfg["api"]["vod"] = []; }
     if (!isset($cfg["api"]["art"]) || !is_array($cfg["api"]["art"])) { $cfg["api"]["art"] = []; }
-    $cfg["app"]["cache_flag"] = substr(md5((string)time()), 0, 10);
+    $cfg["app"]["cache_flag"] = $cacheFlag;
     $cfg["app"]["lang"] = $lang;
     $cfg["site"]["install_dir"] = $installDir;
+    $cfg["site"]["site_url"] = $domain;
+    $cfg["site"]["site_wapurl"] = $domain;
+    if (!empty($siteName)) {
+      $cfg["site"]["site_name"] = $siteName;
+    }
     if (!empty($theme)) {
       $cfg["site"]["template_dir"] = $theme;
       $cfg["site"]["mob_template_dir"] = $theme;
@@ -447,7 +462,7 @@ update_maccms_config() {
     $cfg["api"]["art"]["status"] = 0;
     $body = "<?php\nreturn " . var_export($cfg, true) . ";\n";
     file_put_contents($file, $body);
-  ' "$conf_file" "$INSTALL_DIR" "$APP_LANG" "$theme_name"
+  ' "$conf_file" "$INSTALL_DIR" "$APP_LANG" "$theme_name" "$DOMAIN" "$CACHE_FLAG" "$SITE_NAME"
 
   echo "[INFO] 已更新程式設定檔: $conf_file"
 }
