@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Defaults
-SCRIPT_VERSION="1.0.10"
+SCRIPT_VERSION="1.0.11"
+
 GIT_REPO="https://github.com/secretwebmaster/maccms.git"
 DEPLOY_RAW_BASE="https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main"
 SITE_TYPE="movie"
@@ -21,7 +21,7 @@ DEPLOY_REV="unknown"
 THEME=""
 SITE_NAME=""
 
-echo "[INFO] install.sh 版本: ${SCRIPT_VERSION}"
+echo "[INFO] install.sh version: ${SCRIPT_VERSION}"
 
 usage() {
   cat <<'EOF'
@@ -48,7 +48,6 @@ Usage:
 EOF
 }
 
-# Parse args
 while [ $# -gt 0 ]; do
   case "$1" in
     --domain=*) DOMAIN="${1#*=}" ; shift ;;
@@ -71,45 +70,39 @@ while [ $# -gt 0 ]; do
     --key=*) GITHUB_KEY="${1#*=}" ; shift ;;
     --git_repo=*) GIT_REPO="${1#*=}" ; shift ;;
     -h|--help) usage; exit 0 ;;
-    *)
-      echo "[ERR] 未知參數: $1"
-      usage
-      exit 1
-      ;;
+    *) echo "[ERR] unknown argument: $1"; usage; exit 1 ;;
   esac
 done
 
-# Validate required args
 if [ -z "${DOMAIN:-}" ] || [ -z "${DB_NAME:-}" ] || [ -z "${DB_USER:-}" ] || [ -z "${DB_PASS:-}" ]; then
-  echo "[ERR] 缺少必要參數"
+  echo "[ERR] missing required arguments"
   usage
   exit 1
 fi
 
 if ! echo "$DB_PREFIX" | grep -Eq '^[a-z0-9]{1,20}_$'; then
-  echo "[ERR] --db_prefix 格式必須符合 ^[a-z0-9]{1,20}_$"
+  echo "[ERR] --db_prefix must match ^[a-z0-9]{1,20}_$"
   exit 1
 fi
 
 if [ "$INITDATA" != "0" ] && [ "$INITDATA" != "1" ]; then
-  echo "[ERR] --initdata 只能是 0 或 1"
+  echo "[ERR] --initdata must be 0 or 1"
   exit 1
 fi
 
 if { [ -n "$ADMIN_USER" ] && [ -z "$ADMIN_PASS" ]; } || { [ -z "$ADMIN_USER" ] && [ -n "$ADMIN_PASS" ]; }; then
-  echo "[ERR] --admin_user 與 --admin_pass 必須同時提供"
+  echo "[ERR] --admin_user and --admin_pass must be provided together"
   exit 1
 fi
 
 if [ -n "$ADMIN_PASS" ]; then
   pass_len="${#ADMIN_PASS}"
   if [ "$pass_len" -lt 6 ] || [ "$pass_len" -gt 20 ]; then
-    echo "[ERR] --admin_pass 長度必須為 6-20"
+    echo "[ERR] --admin_pass length must be 6-20"
     exit 1
   fi
 fi
 
-# Default admin bootstrap credentials when not provided.
 if [ -z "$ADMIN_USER" ] && [ -z "$ADMIN_PASS" ]; then
   ADMIN_USER="demoadmin"
   ADMIN_PASS="p123456789"
@@ -118,18 +111,23 @@ fi
 WWW_ROOT="/www/wwwroot/$DOMAIN"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 CACHE_FLAG="$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//')"
-if [ -z "$CACHE_FLAG" ]; then
-  CACHE_FLAG="maccms"
-fi
+if [ -z "$CACHE_FLAG" ]; then CACHE_FLAG="maccms"; fi
+
+mysql_exec() {
+  MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "$@"
+}
+
+mysql_import() {
+  local db_name="$1"
+  local sql_file="$2"
+  MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "$db_name" < "$sql_file"
+}
 
 resolve_default_sql_ref() {
   case "$SITE_TYPE" in
     movie) echo "sql/movie_2026.sql" ;;
     adult) echo "sql/adult_2026.sql" ;;
-    *)
-      echo "[ERR] 不支援的 --site_type: $SITE_TYPE (允許: movie, adult)" >&2
-      exit 1
-      ;;
+    *) echo "[ERR] unsupported --site_type: $SITE_TYPE" >&2; exit 1 ;;
   esac
 }
 
@@ -137,30 +135,20 @@ resolve_default_overlay_dir_ref() {
   case "$SITE_TYPE" in
     movie) echo "overlay/movie" ;;
     adult) echo "overlay/adult" ;;
-    *)
-      echo "[ERR] 不支援的 --site_type: $SITE_TYPE (允許: movie, adult)" >&2
-      exit 1
-      ;;
+    *) echo "[ERR] unsupported --site_type: $SITE_TYPE" >&2; exit 1 ;;
   esac
 }
 
 build_clone_url() {
   local repo_url="$1"
   local key="$2"
-
   if [ -z "$key" ]; then
     echo "$repo_url"
-    return 0
+  elif [[ "$repo_url" == https://github.com/* ]]; then
+    echo "${repo_url/https:\/\//https:\/\/x-access-token:${key}@}"
+  else
+    echo "$repo_url"
   fi
-
-  case "$repo_url" in
-    https://github.com/*)
-      echo "${repo_url/https:\/\//https:\/\/x-access-token:${key}@}"
-      ;;
-    *)
-      echo "$repo_url"
-      ;;
-  esac
 }
 
 sync_repo_to_www_root() {
@@ -169,21 +157,13 @@ sync_repo_to_www_root() {
   local tmp_dir
 
   tmp_dir="$(mktemp -d)"
-  echo "[INFO] 正在 clone MacCMS 到暫存目錄: $tmp_dir"
   git clone "$clone_url" "$tmp_dir"
   DEPLOY_REV="$(git -C "$tmp_dir" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  echo "[INFO] 來源版本: $DEPLOY_REV"
 
   mkdir -p "$target_dir"
   if command -v rsync >/dev/null 2>&1; then
-    echo "[INFO] 正在同步檔案到 $target_dir (保留 .well-known/.user.ini)"
-    rsync -a --delete \
-      --exclude ".git" \
-      --exclude ".well-known" \
-      --exclude ".user.ini" \
-      "$tmp_dir"/ "$target_dir"/
+    rsync -a --delete --exclude ".git" --exclude ".well-known" --exclude ".user.ini" "$tmp_dir"/ "$target_dir"/
   else
-    echo "[WARN] 找不到 rsync，改用 cp 備援 (不會刪除多餘檔案)"
     cp -a "$tmp_dir"/. "$target_dir"/
     rm -rf "$target_dir/.git"
   fi
@@ -203,20 +183,17 @@ deploy_overlay_dir_if_needed() {
 
   if [ -d "$overlay_local_dir" ]; then
     overlay_source_dir="$overlay_local_dir"
-    echo "[INFO] 使用本地 overlay 目錄: $overlay_source_dir"
   else
     tmp_deploy_repo="$(mktemp -d)"
-    echo "[INFO] 正在下載部署倉庫以取得 overlay 目錄"
     git clone --depth 1 "https://github.com/secretwebmaster/maccms-deploy.git" "$tmp_deploy_repo"
     overlay_source_dir="$tmp_deploy_repo/$overlay_ref"
   fi
 
   if [ ! -d "$overlay_source_dir" ]; then
-    echo "[ERR] 找不到 overlay 目錄: $overlay_source_dir"
+    echo "[ERR] overlay dir not found: $overlay_source_dir"
     exit 1
   fi
 
-  echo "[INFO] 正在覆蓋 overlay 檔案到站點根目錄: $target_dir"
   if command -v rsync >/dev/null 2>&1; then
     rsync -a "$overlay_source_dir"/ "$target_dir"/
   else
@@ -245,8 +222,12 @@ deploy_theme_if_needed() {
   theme_dir="$target_dir/template/$theme_name"
   tmp_theme_dir="$(mktemp -d)"
 
-  echo "[INFO] 正在下載主題: $theme_name"
-  git clone "$theme_clone_url" "$tmp_theme_dir"
+  echo "正在下載主題: $theme_name"
+  if ! git clone --quiet "$theme_clone_url" "$tmp_theme_dir" >/dev/null 2>&1; then
+    echo "[ERR] 主題下載失敗: $theme_name"
+    rm -rf "$tmp_theme_dir"
+    exit 1
+  fi
 
   mkdir -p "$theme_dir"
   if command -v rsync >/dev/null 2>&1; then
@@ -257,7 +238,7 @@ deploy_theme_if_needed() {
   fi
 
   rm -rf "$tmp_theme_dir"
-  echo "[INFO] 主題已部署到: $theme_dir"
+  echo "成功下載主題: $theme_name"
 }
 
 ensure_webroot_owner() {
@@ -265,50 +246,33 @@ ensure_webroot_owner() {
   local owner_now=""
 
   if id -u www >/dev/null 2>&1 && getent group www >/dev/null 2>&1; then
-    echo "[INFO] 正在將 $target_dir 擁有者設為 www:www"
     if ! chown -R www:www "$target_dir" 2>/dev/null; then
-      echo "[WARN] 遞迴 chown 發生權限錯誤，將排除 .user.ini 後重試"
       if command -v find >/dev/null 2>&1; then
-        find "$target_dir" \
-          -path "$target_dir/.user.ini" -prune -o \
-          -exec chown www:www {} + 2>/dev/null || true
-      else
-        echo "[WARN] 找不到 find 指令，略過備援 chown"
+        find "$target_dir" -path "$target_dir/.user.ini" -prune -o -exec chown www:www {} + 2>/dev/null || true
       fi
     fi
-
     owner_now="$(stat -c '%U:%G' "$target_dir" 2>/dev/null || echo unknown)"
-    echo "[INFO] $target_dir 目前擁有者: $owner_now"
+    if [ "$owner_now" != "www:www" ]; then
+      echo "[WARN] directory owner not www:www: $target_dir => $owner_now"
+    fi
   else
-    echo "[WARN] 找不到 www:www 使用者/群組，略過 chown"
+    echo "[WARN] user/group www:www not found, skip chown"
   fi
 }
 
 table_exists() {
   local table_name="$1"
   local result
-
-  result="$(
-    mysql -N -s \
-      -h "$DB_HOST" \
-      -P "$DB_PORT" \
-      -u "$DB_USER" \
-      -p"$DB_PASS" \
-      -D "$DB_NAME" \
-      -e "SHOW TABLES LIKE '$table_name';" || true
-  )"
-
+  result="$(mysql_exec -N -s -D "$DB_NAME" -e "SHOW TABLES LIKE '$table_name';" 2>/dev/null || true)"
   [ "$result" = "$table_name" ]
 }
 
+schema_exists() {
+  table_exists "${DB_PREFIX}type" && table_exists "${DB_PREFIX}admin"
+}
+
 ensure_database_exists() {
-  echo "[INFO] 確認資料庫存在: $DB_NAME"
-  mysql \
-    -h "$DB_HOST" \
-    -P "$DB_PORT" \
-    -u "$DB_USER" \
-    -p"$DB_PASS" \
-    -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` DEFAULT CHARACTER SET utf8;"
+  mysql_exec -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` DEFAULT CHARACTER SET utf8;"
 }
 
 write_database_php_config() {
@@ -343,8 +307,6 @@ return [
     'query'           => '\\think\\db\\Query',
 ];
 EOF
-
-  echo "[INFO] 已寫入資料庫設定檔: $db_file"
 }
 
 import_sql_with_prefix() {
@@ -354,7 +316,7 @@ import_sql_with_prefix() {
   local tmp_sql=""
 
   if [ ! -f "$sql_file" ]; then
-    echo "[ERR] 找不到 SQL 檔案: $sql_file"
+    echo "[ERR] SQL file not found: $sql_file"
     exit 1
   fi
 
@@ -364,13 +326,8 @@ import_sql_with_prefix() {
     sql_to_import="$tmp_sql"
   fi
 
-  echo "[INFO] 正在匯入 $label SQL 到 $DB_NAME ..."
-  mysql \
-    -h "$DB_HOST" \
-    -P "$DB_PORT" \
-    -u "$DB_USER" \
-    -p"$DB_PASS" \
-    "$DB_NAME" < "$sql_to_import"
+  echo "[INFO]  正在匯入 $label 到 $DB_NAME ..."
+  mysql_import "$DB_NAME" "$sql_to_import"
 
   if [ -n "$tmp_sql" ] && [ -f "$tmp_sql" ]; then
     rm -f "$tmp_sql"
@@ -382,7 +339,7 @@ import_base_schema_if_needed() {
   local base_install_sql=""
   local base_init_sql=""
 
-  if table_exists "${DB_PREFIX}type"; then
+  if schema_exists; then
     return 0
   fi
 
@@ -399,16 +356,15 @@ import_base_schema_if_needed() {
   fi
 
   if [ -z "$base_install_sql" ]; then
-    echo "[WARN] 找不到資料表 ${DB_PREFIX}type，且在 $target_dir 找不到基礎 schema SQL"
+    echo "[WARN] 找不到 MacCMS 基礎 schema SQL: $target_dir"
     return 0
   fi
 
-  echo "[INFO] 找不到資料表 ${DB_PREFIX}type，正在匯入基礎 schema: $base_install_sql"
-  import_sql_with_prefix "$base_install_sql" "base-schema"
+  echo "[INFO] 找不到既有 MacCMS schema，正在匯入基礎 schema: $base_install_sql"
+  import_sql_with_prefix "$base_install_sql" "base-schema.sql"
 
   if [ "$INITDATA" = "1" ] && [ -n "$base_init_sql" ]; then
-    echo "[INFO] 正在匯入基礎初始化資料: $base_init_sql"
-    import_sql_with_prefix "$base_init_sql" "base-initdata"
+    import_sql_with_prefix "$base_init_sql" "initdata.sql"
   fi
 }
 
@@ -419,12 +375,12 @@ update_maccms_config() {
 
   mkdir -p "$(dirname "$conf_file")"
   if [ ! -f "$conf_file" ]; then
-    echo "[WARN] 找不到設定檔，略過 maccms 設定更新: $conf_file"
+    echo "[WARN] config not found, skip update: $conf_file"
     return 0
   fi
 
   if ! command -v php >/dev/null 2>&1; then
-    echo "[WARN] 找不到 php 指令，略過 maccms 設定更新"
+    echo "[WARN] php not found, skip maccms.php update"
     return 0
   fi
 
@@ -449,9 +405,7 @@ update_maccms_config() {
     $cfg["site"]["install_dir"] = $installDir;
     $cfg["site"]["site_url"] = $domain;
     $cfg["site"]["site_wapurl"] = $domain;
-    if (!empty($siteName)) {
-      $cfg["site"]["site_name"] = $siteName;
-    }
+    if (!empty($siteName)) { $cfg["site"]["site_name"] = $siteName; }
     if (!empty($theme)) {
       $cfg["site"]["template_dir"] = $theme;
       $cfg["site"]["mob_template_dir"] = $theme;
@@ -463,17 +417,13 @@ update_maccms_config() {
     $body = "<?php\nreturn " . var_export($cfg, true) . ";\n";
     file_put_contents($file, $body);
   ' "$conf_file" "$INSTALL_DIR" "$APP_LANG" "$theme_name" "$DOMAIN" "$CACHE_FLAG" "$SITE_NAME"
-
-  echo "[INFO] 已更新程式設定檔: $conf_file"
 }
 
 create_install_lock() {
   local target_dir="$1"
   local lock_file="$target_dir/application/data/install/install.lock"
-
   mkdir -p "$(dirname "$lock_file")"
   date '+%Y-%m-%d %H:%M:%S' > "$lock_file"
-  echo "[INFO] 已建立安裝鎖檔: $lock_file"
 }
 
 ensure_admin_account() {
@@ -484,27 +434,16 @@ ensure_admin_account() {
   local esc_user
 
   if ! table_exists "$table_name"; then
-    echo "[WARN] 找不到管理員資料表: $table_name"
     return 0
   fi
 
-  admin_count="$(
-    mysql -N -s \
-      -h "$DB_HOST" \
-      -P "$DB_PORT" \
-      -u "$DB_USER" \
-      -p"$DB_PASS" \
-      -D "$DB_NAME" \
-      -e "SELECT COUNT(*) FROM \`$table_name\`;" 2>/dev/null || echo "0"
-  )"
-
+  admin_count="$(mysql_exec -N -s -D "$DB_NAME" -e "SELECT COUNT(*) FROM \`$table_name\`;" 2>/dev/null || echo "0")"
   if [ "$admin_count" != "0" ]; then
-    echo "[INFO] 管理員帳號已存在，略過初始化"
     return 0
   fi
 
   if [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_PASS" ]; then
-    echo "[WARN] 資料庫中無管理員帳號。可傳入 --admin_user 與 --admin_pass 進行初始化。"
+    echo "[WARN] no admin found and no --admin_user/--admin_pass provided"
     return 0
   fi
 
@@ -512,21 +451,13 @@ ensure_admin_account() {
   admin_random="$(date +%s%N | md5sum | awk '{print $1}')"
   esc_user="$(printf '%s' "$ADMIN_USER" | sed "s/'/''/g")"
 
-  mysql \
-    -h "$DB_HOST" \
-    -P "$DB_PORT" \
-    -u "$DB_USER" \
-    -p"$DB_PASS" \
-    -D "$DB_NAME" \
-    -e "INSERT INTO \`$table_name\` (\`admin_name\`,\`admin_pwd\`,\`admin_random\`,\`admin_status\`,\`admin_auth\`) VALUES ('$esc_user','$admin_pwd_md5','$admin_random',1,'');"
-
-  echo "[INFO] 已初始化管理員帳號: $ADMIN_USER"
+  mysql_exec -D "$DB_NAME" -e "INSERT INTO \`$table_name\` (\`admin_name\`,\`admin_pwd\`,\`admin_random\`,\`admin_status\`,\`admin_auth\`) VALUES ('$esc_user','$admin_pwd_md5','$admin_random',1,'');"
 }
 
 update_nginx_rule() {
   local conf_file="/www/server/panel/vhost/rewrite/${DOMAIN}.conf"
   local backup_file="${conf_file}.bak.$(date +%s)"
-  local tmp_file=""
+  local tmp_file
 
   mkdir -p "$(dirname "$conf_file")"
   if [ -f "$conf_file" ]; then
@@ -546,31 +477,20 @@ if (!-e $request_filename) {
 }
 EOF
   mv "$tmp_file" "$conf_file"
-  echo "[INFO] 已更新 nginx rewrite 規則: $conf_file"
 
   if command -v nginx >/dev/null 2>&1; then
     if nginx -t >/dev/null 2>&1; then
-      if nginx -s reload >/dev/null 2>&1 || systemctl reload nginx >/dev/null 2>&1 || service nginx reload >/dev/null 2>&1; then
-        echo "[INFO] nginx 已重新載入設定"
-      else
-        echo "[WARN] nginx 語法檢查成功，但重新載入失敗，請手動 reload"
-      fi
+      nginx -s reload >/dev/null 2>&1 || systemctl reload nginx >/dev/null 2>&1 || service nginx reload >/dev/null 2>&1 || true
     else
       if [ -f "$backup_file" ]; then
         cp "$backup_file" "$conf_file"
-        echo "[WARN] nginx 語法檢查失敗，已還原設定檔: $backup_file"
-      else
-        echo "[WARN] nginx 語法檢查失敗，且無備份可還原: $conf_file"
       fi
     fi
-  else
-    echo "[WARN] 找不到 nginx 指令，請手動檢查與 reload"
   fi
 }
 
 CLONE_URL="$(build_clone_url "$GIT_REPO" "$GITHUB_KEY")"
 
-# 1) Deploy code to web root even if directory already exists
 sync_repo_to_www_root "$CLONE_URL" "$WWW_ROOT"
 deploy_theme_if_needed "$WWW_ROOT" "$THEME"
 deploy_overlay_dir_if_needed "$WWW_ROOT"
@@ -579,44 +499,29 @@ if [ -n "$GITHUB_KEY" ] && [ -d "$WWW_ROOT/.git" ]; then
   git -C "$WWW_ROOT" remote set-url origin "$GIT_REPO" || true
 fi
 
-# 2) Resolve SQL source
 TMP_SQL=""
 if [ -n "$SQL_PATH" ]; then
   if [ ! -f "$SQL_PATH" ]; then
-    echo "[ERR] --sql_path 指定檔案不存在: $SQL_PATH"
+    echo "[ERR] --sql_path file not found: $SQL_PATH"
     exit 1
   fi
 elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$(resolve_default_sql_ref)" ]; then
   SQL_PATH="$SCRIPT_DIR/$(resolve_default_sql_ref)"
 else
   SQL_REF="$(resolve_default_sql_ref)"
-  if [ -z "$SQL_URL" ]; then
-    SQL_URL="$DEPLOY_RAW_BASE/$SQL_REF"
-  fi
+  SQL_URL="${SQL_URL:-$DEPLOY_RAW_BASE/$SQL_REF}"
   TMP_SQL="$(mktemp)"
-  echo "[INFO] 正在下載 SQL: $SQL_URL"
   curl -fsSL "$SQL_URL" -o "$TMP_SQL"
   SQL_PATH="$TMP_SQL"
 fi
 
-# 3) Ensure database + write app DB config
 ensure_database_exists
 write_database_php_config "$WWW_ROOT"
-
-# 4) Import base schema if needed
 import_base_schema_if_needed "$WWW_ROOT"
-
-# 5) Import site SQL
-import_sql_with_prefix "$SQL_PATH" "site"
-
-# 6) Update app config and lock install state
+import_sql_with_prefix "$SQL_PATH" "install.sql"
 update_maccms_config "$WWW_ROOT" "$THEME"
 create_install_lock "$WWW_ROOT"
-
-# 7) Optional admin bootstrap
 ensure_admin_account
-
-# 8) Update nginx rewrite rule
 update_nginx_rule
 
 echo "[OK] MacCMS 自動部署流程完成。source_rev=$DEPLOY_REV"
