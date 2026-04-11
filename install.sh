@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.0.12"
+SCRIPT_VERSION="1.0.13"
 
 GIT_REPO="https://github.com/secretwebmaster/maccms.git"
 DEPLOY_RAW_BASE="https://raw.githubusercontent.com/secretwebmaster/maccms-deploy/main"
@@ -20,8 +20,6 @@ APP_LANG="zh-cn"
 DEPLOY_REV="unknown"
 THEME=""
 SITE_NAME=""
-
-echo "[INFO] install.sh version: ${SCRIPT_VERSION}"
 
 usage() {
   cat <<'EOF'
@@ -245,7 +243,6 @@ deploy_theme_if_needed() {
   fi
 
   rm -rf "$tmp_theme_dir"
-  echo "[INFO] 成功下載主題: $theme_name"
 }
 
 ensure_webroot_owner() {
@@ -333,7 +330,7 @@ import_sql_with_prefix() {
     sql_to_import="$tmp_sql"
   fi
 
-  echo "[INFO] 正在匯入 $label 到 $DB_NAME ..."
+  echo "[INFO] 正在匯入 $label 到 $DB_NAME"
   mysql_import "$DB_NAME" "$sql_to_import"
 
   if [ -n "$tmp_sql" ] && [ -f "$tmp_sql" ]; then
@@ -498,6 +495,7 @@ EOF
 CLONE_URL="$(build_clone_url "$GIT_REPO" "$GITHUB_KEY")"
 
 sync_repo_to_www_root "$CLONE_URL" "$WWW_ROOT"
+echo "[INFO] install.sh version: ${SCRIPT_VERSION} (${DEPLOY_REV})"
 deploy_theme_if_needed "$WWW_ROOT" "$THEME"
 deploy_overlay_dir_if_needed "$WWW_ROOT"
 ensure_webroot_owner "$WWW_ROOT"
@@ -537,7 +535,7 @@ create_install_lock "$WWW_ROOT"
 ensure_admin_account
 update_nginx_rule
 
-echo "[OK] MacCMS 自動部署流程完成。source_rev=$DEPLOY_REV"
+echo "[OK] MacCMS 自動部署流程完成"
 
 if [ -n "$TMP_SQL" ] && [ -f "$TMP_SQL" ]; then
   rm -f "$TMP_SQL"
